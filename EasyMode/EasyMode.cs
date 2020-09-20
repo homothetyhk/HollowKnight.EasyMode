@@ -69,13 +69,39 @@ namespace EasyMode
             yield return new WaitWhile(() => HeroController.instance == null || HeroController.instance.heroDeathPrefab == null);
             try
             {
-                FsmState MapZone = HeroController.instance.heroDeathPrefab.LocateMyFSM("Hero Death Anim").FsmStates.First(state => state.Name == "Map Zone");
-                FsmState WPCheck = HeroController.instance.heroDeathPrefab.LocateMyFSM("Hero Death Anim").FsmStates.First(state => state.Name == "WP Check");
+                PlayMakerFSM fsm = HeroController.instance.heroDeathPrefab.LocateMyFSM("Hero Death Anim");
+                FsmState MapZone = fsm.FsmStates.First(state => state.Name == "Map Zone");
+                FsmState WPCheck = fsm.FsmStates.First(state => state.Name == "WP Check");
                 if (newSetting)
                 {
                     Log("Shade spawn disabled");
                     MapZone.Transitions.First(t => t.EventName == "FINISHED").ToState = "Anim Start";
-
+                    try
+                    {
+                        FsmState WPCheck2 = fsm.FsmStates.First(state => state.Name == "WP Check2");
+                    }
+                    catch
+                    {
+                        FsmState WPCheck2 = new FsmState(WPCheck)
+                        {
+                            Name = "WP Check2"
+                        };
+                        List<FsmState> list = fsm.FsmStates.ToList<FsmState>();
+                        list.Add(WPCheck2);
+                        fsm.Fsm.States = list.ToArray();
+                        StringCompare inGH = WPCheck.Actions.Last() as StringCompare;
+                        StringCompare sc = new StringCompare
+                        {
+                            stringVariable = inGH.stringVariable,
+                            compareTo = "GODS_GLORY",
+                            equalEvent = inGH.notEqualEvent,
+                            notEqualEvent = inGH.equalEvent,
+                            storeResult = false,
+                            everyFrame = false
+                        };
+                        inGH = sc;
+                    }
+                    WPCheck.Transitions.First(t => t.EventName == "WHITE PALACE").ToState = "WP Check2";
                     // exit the death sequence through the white palace path
                     if (WPCheck.Actions.Last() is StringCompare inWP)
                     {
@@ -94,6 +120,7 @@ namespace EasyMode
                 {
                     Log("Shade spawn reenabled");
                     MapZone.Transitions.First(t => t.EventName == "FINISHED").ToState = "Break Glass HP";
+                    WPCheck.Transitions.First(t => t.EventName == "WHITE PALACE").ToState = "Wait for HeroController";
                     WPCheck.Actions = new FsmStateAction[] { WPCheck.Actions.Last() };
                 }
             }

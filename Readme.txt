@@ -1,0 +1,11 @@
+EasyMode
+- This is a simple mod to make Hollow Knight easier for new players
+- The mod can be toggled at any time from the ingame mod menu, with no permanent save changes
+- This mod requires SeanprCore as a dependency
+- The following are its effects
+	- All charm costs are reduced by 1
+	- Sitting at a bench gives 2 free lifeblood masks
+	- Nail damage is increased, using the formula dmg = 8 + 5 * upgrades. (compare: base game gives dmg = 5 + 4 * upgrades)
+	- Soul collection is increased by 6 per nail hit (with no charms, 2 hits now allows a spell or focus)
+	- Focus time is reduced by half
+	- Dying no longer loses geo or causes a shade to spawn
