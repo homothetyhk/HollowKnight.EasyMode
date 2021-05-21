@@ -32,7 +32,7 @@ namespace EasyMode
 
         public override string GetVersion()
         {
-            return "1.0";
+            return "1.1";
         }
 
         public GlobalModSettings _globalSettings = new GlobalModSettings();
