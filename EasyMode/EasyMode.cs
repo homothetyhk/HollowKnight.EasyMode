@@ -1,12 +1,11 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using HutongGames.PlayMaker;
 using Modding;
 using UnityEngine;
-using SeanprCore;
+using SereCore;
 using HutongGames.PlayMaker.Actions;
 
 namespace EasyMode
@@ -18,8 +17,8 @@ namespace EasyMode
             ModHooks.Instance.GetPlayerIntHook += GetInt;
             ModHooks.Instance.SetPlayerIntHook += SetInt;
             On.PlayerData.UpdateBlueHealth += BlueHealthHook;
-            GameManager.instance.StartCoroutine(ToggleShadeSpawn(true));
-            GameManager.instance.StartCoroutine(ToggleFastFocus(true));
+            GameManager.instance.StartCoroutine(ToggleShadeSpawn(_globalSettings.no_shade));
+            GameManager.instance.StartCoroutine(ToggleFastFocus(_globalSettings.fast_focus));
         }
 
         public void Unload()
@@ -36,21 +35,35 @@ namespace EasyMode
             return "1.0";
         }
 
+        public GlobalModSettings _globalSettings = new GlobalModSettings();
+        public override ModSettings GlobalSettings
+        {
+            get => _globalSettings;
+            set => _globalSettings = (GlobalModSettings)value;
+        }
+
+
         private void BlueHealthHook(On.PlayerData.orig_UpdateBlueHealth orig, PlayerData self)
         {
             orig(self);
 
             // Free blue health from benches
-            self.healthBlue += 2;
+            if (_globalSettings.extra_lifeblood) self.healthBlue += _globalSettings.more_lifeblood;
         }
 
         private int GetInt(string intName)
         {
             // Reduced charm cost
-            if (intName.StartsWith("charmCost")) return PlayerData.instance.GetIntInternal(intName) - 1;
+            if (_globalSettings.reduced_charm_cost)
+            {
+                if (intName.StartsWith("charmCost")) return PlayerData.instance.GetIntInternal(intName) - 1;
+            }
 
             // More damage
-            if (intName == nameof(PlayerData.instance.nailDamage)) return 8 + 5 * PlayerData.instance.nailSmithUpgrades;
+            if (_globalSettings.more_damage)
+            {
+                if (intName == nameof(PlayerData.instance.nailDamage)) return _globalSettings.base_nail + _globalSettings.increase_per_upgrade * PlayerData.instance.nailSmithUpgrades;
+            }
 
             return PlayerData.instance.GetIntInternal(intName);
         }
@@ -58,8 +71,10 @@ namespace EasyMode
         private void SetInt(string intName, int value)
         {
             // More soul
-            if (intName == nameof(PlayerData.MPCharge) && value > PlayerData.instance.MPCharge) value = Math.Min(value + 6, 100);
-
+            if (_globalSettings.more_soul)
+            {
+                if (intName == nameof(PlayerData.MPCharge) && value > PlayerData.instance.MPCharge) value = Math.Min(value + _globalSettings.increased_soul, 100);
+            }
             PlayerData.instance.SetIntInternal(intName, value);
         }
 
@@ -145,7 +160,7 @@ namespace EasyMode
                         DeepFocusSpeed.AddFirstAction(new FloatMultiply
                         {
                             floatVariable = slowFocus.floatVariable,
-                            multiplyBy = 0.5f,
+                            multiplyBy = _globalSettings.focus_multiplier,
                             everyFrame = false
                         });
                     }
