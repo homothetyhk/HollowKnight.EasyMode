@@ -6,34 +6,61 @@ using System.Text;
 using HutongGames.PlayMaker;
 using Modding;
 using UnityEngine;
-using SeanprCore;
 using HutongGames.PlayMaker.Actions;
 
 namespace EasyMode
 {
-    public class EasyMode : Mod, ITogglableMod
+    public class EasyMode : Mod, ITogglableMod, IGlobalSettings<Settings>, IMenuMod
     {
+        public static Settings Settings = new Settings();
+        private static EasyMode instance;
+        public static bool Enabled = false;
+
+        public class CoroutineHolder : MonoBehaviour { }
+        private CoroutineHolder coroutineHolder;
+
         public override void Initialize()
         {
-            ModHooks.Instance.GetPlayerIntHook += GetInt;
-            ModHooks.Instance.SetPlayerIntHook += SetInt;
+            instance = this;
+            Enabled = true;
+            coroutineHolder = new GameObject("EasyMode Coroutine Holder").AddComponent<CoroutineHolder>();
+            UnityEngine.Object.DontDestroyOnLoad(coroutineHolder);
+
+            ModHooks.GetPlayerIntHook += GetInt;
+            ModHooks.SetPlayerIntHook += SetInt;
             On.PlayerData.UpdateBlueHealth += BlueHealthHook;
-            GameManager.instance.StartCoroutine(ToggleShadeSpawn(true));
-            GameManager.instance.StartCoroutine(ToggleFastFocus(true));
+            On.HeroController.Start += OnStart;
+            if (HeroController.instance != null)
+            {
+                ToggleShadeSpawn();
+                ToggleFastFocus();
+            }
+        }
+
+        private void OnStart(On.HeroController.orig_Start orig, HeroController self)
+        {
+            orig(self);
+            ToggleShadeSpawn();
+            ToggleFastFocus();
         }
 
         public void Unload()
         {
-            ModHooks.Instance.GetPlayerIntHook -= GetInt;
-            ModHooks.Instance.SetPlayerIntHook -= SetInt;
+            ModHooks.GetPlayerIntHook -= GetInt;
+            ModHooks.SetPlayerIntHook -= SetInt;
             On.PlayerData.UpdateBlueHealth -= BlueHealthHook;
-            GameManager.instance.StartCoroutine(ToggleShadeSpawn(false));
-            GameManager.instance.StartCoroutine(ToggleFastFocus(false));
+            On.HeroController.Start -= OnStart;
+            if (HeroController.instance != null)
+            {
+                ToggleShadeSpawn();
+                ToggleFastFocus();
+            }
+            Enabled = false;
         }
 
         public override string GetVersion()
         {
-            return "1.0";
+            return "1.1";
         }
 
         private void BlueHealthHook(On.PlayerData.orig_UpdateBlueHealth orig, PlayerData self)
@@ -41,121 +68,91 @@ namespace EasyMode
             orig(self);
 
             // Free blue health from benches
-            self.healthBlue += 2;
+            if (Settings.ExtraBlueHP) self.healthBlue += Settings.ExtraBlueHPAmount;
         }
 
-        private int GetInt(string intName)
+        private int GetInt(string intName, int value)
         {
             // Reduced charm cost
-            if (intName.StartsWith("charmCost")) return PlayerData.instance.GetIntInternal(intName) - 1;
+            if (Settings.ReducedCharmCost && intName.StartsWith("charmCost")) return value - 1;
 
             // More damage
-            if (intName == nameof(PlayerData.instance.nailDamage)) return 8 + 5 * PlayerData.instance.nailSmithUpgrades;
+            if (Settings.ExtraNailDamage && intName == nameof(PlayerData.instance.nailDamage))
+            {
+                return Settings.ExtraNailDamageBase + Settings.ExtraNailDamagePerUpgrade * (value - 5) / 4;
+            }
 
-            return PlayerData.instance.GetIntInternal(intName);
+            return value;
         }
 
-        private void SetInt(string intName, int value)
+        private int SetInt(string intName, int value)
         {
             // More soul
-            if (intName == nameof(PlayerData.MPCharge) && value > PlayerData.instance.MPCharge) value = Math.Min(value + 6, 100);
+            if (Settings.ExtraSoulRecharge && intName == nameof(PlayerData.MPCharge) && value > PlayerData.instance.MPCharge) return Math.Min(value + Settings.ExtraSoulPerHitAmount, 100);
 
-            PlayerData.instance.SetIntInternal(intName, value);
+            return value;
         }
 
-        private IEnumerator ToggleShadeSpawn(bool newSetting)
+        public static void ToggleShadeSpawn()
+        {
+            if (instance == null || instance.coroutineHolder == null || !Enabled) return;
+            instance.coroutineHolder.StartCoroutine(instance.ToggleShadeSpawnCoroutine());
+        }
+
+        private IEnumerator ToggleShadeSpawnCoroutine()
         {
             yield return null;
             yield return new WaitWhile(() => HeroController.instance == null || HeroController.instance.heroDeathPrefab == null);
             try
             {
                 PlayMakerFSM fsm = HeroController.instance.heroDeathPrefab.LocateMyFSM("Hero Death Anim");
-                FsmState MapZone = fsm.FsmStates.First(state => state.Name == "Map Zone");
-                FsmState WPCheck = fsm.FsmStates.First(state => state.Name == "WP Check");
-                if (newSetting)
-                {
-                    Log("Shade spawn disabled");
-                    MapZone.Transitions.First(t => t.EventName == "FINISHED").ToState = "Anim Start";
-                    try
-                    {
-                        FsmState WPCheck2 = fsm.FsmStates.First(state => state.Name == "WP Check2");
-                    }
-                    catch
-                    {
-                        FsmState WPCheck2 = new FsmState(WPCheck)
-                        {
-                            Name = "WP Check2"
-                        };
-                        List<FsmState> list = fsm.FsmStates.ToList<FsmState>();
-                        list.Add(WPCheck2);
-                        fsm.Fsm.States = list.ToArray();
-                        StringCompare inGH = WPCheck.Actions.Last() as StringCompare;
-                        StringCompare sc = new StringCompare
-                        {
-                            stringVariable = inGH.stringVariable,
-                            compareTo = "GODS_GLORY",
-                            equalEvent = inGH.notEqualEvent,
-                            notEqualEvent = inGH.equalEvent,
-                            storeResult = false,
-                            everyFrame = false
-                        };
-                        inGH = sc;
-                    }
-                    WPCheck.Transitions.First(t => t.EventName == "WHITE PALACE").ToState = "WP Check2";
-                    // exit the death sequence through the white palace path
-                    if (WPCheck.Actions.Last() is StringCompare inWP)
-                    {
-                        WPCheck.AddFirstAction(new StringCompare
-                        {
-                            stringVariable = inWP.stringVariable,
-                            compareTo = "DREAM_WORLD",
-                            equalEvent = inWP.notEqualEvent,
-                            notEqualEvent = inWP.equalEvent,
-                            storeResult = false,
-                            everyFrame = false
-                        });
-                    }
-                }
-                else
-                {
-                    Log("Shade spawn reenabled");
-                    MapZone.Transitions.First(t => t.EventName == "FINISHED").ToState = "Break Glass HP";
-                    WPCheck.Transitions.First(t => t.EventName == "WHITE PALACE").ToState = "Wait for HeroController";
-                    WPCheck.Actions = new FsmStateAction[] { WPCheck.Actions.Last() };
-                }
-            }
-            catch (Exception e)
-            {
-                LogError(e);
-            }
-        }
+                FsmState mapZone = fsm.GetState("Map Zone");
+                FsmState wpCheck = fsm.GetState("WP Check");
+                FsmString zone = fsm.FsmVariables.FindFsmString("Map Zone");
 
-        private IEnumerator ToggleFastFocus(bool newSetting)
-        {
-            yield return null;
-            yield return new WaitWhile(() => HeroController.instance == null || HeroController.instance.spellControl == null);
-            try
-            {
-                FsmState DeepFocusSpeed = HeroController.instance.spellControl.GetState("Deep Focus Speed");
-                if (newSetting)
+                if (Settings.NoShadeOnDeath)
                 {
-                    Log("Decreasing focus speed");
-                    if (DeepFocusSpeed.Actions.Last() is FloatMultiply slowFocus)
+                    FsmState animStart = fsm.GetState("Anim Start");
+                    mapZone.Transitions.First(t => t.EventName == "FINISHED").SetToState(animStart);
+
+                    wpCheck.Actions = new FsmStateAction[]
                     {
-                        DeepFocusSpeed.AddFirstAction(new FloatMultiply
+                        new StringCompare
                         {
-                            floatVariable = slowFocus.floatVariable,
-                            multiplyBy = 0.5f,
-                            everyFrame = false
-                        });
-                    }
+                            stringVariable = zone,
+                            compareTo = "DREAM_WORLD",
+                            equalEvent = FsmEvent.Finished,
+                            notEqualEvent = null,
+                            everyFrame = false,
+                            storeResult = false,
+                        },
+                        new StringCompare
+                        {
+                            stringVariable = zone,
+                            compareTo = "GODS_GLORY",
+                            equalEvent = FsmEvent.Finished,
+                            notEqualEvent = FsmEvent.GetFsmEvent("WHITE PALACE"),
+                            everyFrame = false,
+                            storeResult = false,
+                        },
+                    };
                 }
                 else
                 {
-                    Log("Returning focus speed to normal");
-                    DeepFocusSpeed.Actions = new FsmStateAction[]
+                    FsmState breakGlassHP = fsm.GetState("Break Glass HP");
+                    mapZone.Transitions.First(t => t.EventName == "FINISHED").SetToState(breakGlassHP);
+
+                    wpCheck.Actions = new FsmStateAction[]
                     {
-                    DeepFocusSpeed.Actions[1], DeepFocusSpeed.Actions[2]
+                        new StringCompare
+                        {
+                            stringVariable = zone,
+                            compareTo = "WHITE_PALACE",
+                            equalEvent = FsmEvent.GetFsmEvent("WHITE PALACE"),
+                            notEqualEvent = null,
+                            everyFrame = false,
+                            storeResult = false,
+                        },
                     };
                 }
             }
@@ -163,6 +160,79 @@ namespace EasyMode
             {
                 LogError(e);
             }
+        }
+
+        public static void ToggleFastFocus()
+        {
+            if (instance == null || instance.coroutineHolder == null || !Enabled) return;
+            instance.coroutineHolder.StartCoroutine(instance.ToggleFastFocusCoroutine());
+        }
+
+        private IEnumerator ToggleFastFocusCoroutine()
+        {
+            yield return null;
+            yield return new WaitWhile(() => HeroController.instance == null || HeroController.instance.spellControl == null);
+            try
+            {
+                FsmState deepFocusSpeed = HeroController.instance.spellControl.GetState("Deep Focus Speed");
+                FsmFloat tpd = HeroController.instance.spellControl.FsmVariables.FindFsmFloat("Time Per MP Drain");
+                PlayerDataBoolTest test = deepFocusSpeed.GetFirstActionOfType<PlayerDataBoolTest>();
+                FloatMultiply slowFocus = deepFocusSpeed.GetLastActionOfType<FloatMultiply>();
+                if (test == null || slowFocus == null) throw new InvalidOperationException("Unable to find Deep Focus Speed actions.");
+
+                if (Settings.FasterFocus)
+                {
+                    deepFocusSpeed.Actions = new FsmStateAction[]
+                    {
+                        new FloatMultiply
+                        {
+                            floatVariable = tpd,
+                            multiplyBy = Settings.FasterFocusTimeMultipler,
+                            everyFrame = false,
+                        },
+                        test,
+                        slowFocus,
+                    };
+                }
+                else
+                {
+                    deepFocusSpeed.Actions = new FsmStateAction[] { test, slowFocus };
+                }
+            }
+            catch (Exception e)
+            {
+                LogError(e);
+            }
+        }
+
+        void IGlobalSettings<Settings>.OnLoadGlobal(Settings s)
+        {
+            Settings = s ?? Settings ?? new Settings();
+        }
+
+        Settings IGlobalSettings<Settings>.OnSaveGlobal()
+        {
+            return Settings;
+        }
+
+        bool IMenuMod.ToggleButtonInsideMenu => true;
+        List<IMenuMod.MenuEntry> IMenuMod.GetMenuData(IMenuMod.MenuEntry? toggleButtonEntry)
+        {
+            List<IMenuMod.MenuEntry> entries = new List<IMenuMod.MenuEntry>();
+            entries.Add(toggleButtonEntry ?? throw new ArgumentNullException(nameof(toggleButtonEntry)));
+
+            string[] bools = new string[] { "Off", "On" };
+            entries.AddRange(Settings.GetType().GetProperties()
+                .Where(f => f.PropertyType == typeof(bool))
+                .Select(f => new IMenuMod.MenuEntry(
+                f.Name.FromCamelCase(),
+                bools,
+                string.Empty,
+                i => f.SetValue(Settings, i == 1),
+                () => ((bool)f.GetValue(Settings)) ? 1 : 0
+            )));
+
+            return entries;
         }
     }
 }
